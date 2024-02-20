@@ -341,6 +341,8 @@ int main(int argc, char *argv[])
 	{
 		char configname[100];
 		int fd;
+		uint16_t command;
+		uint8_t header_type;
 
 		snprintf(configname, 99, "/sys/bus/pci/devices/%04x:%02x:%02x.%1x/config",
 				dev->domain, dev->bus, dev->slot, dev->function);
@@ -350,6 +352,51 @@ int main(int argc, char *argv[])
 				configname, errno, strerror(errno));
 			return -1;
 		}
+
+		/*
+		 * TODO:
+		 *	Change to mmap
+		 *	Support big endian
+		 */
+
+		status = lseek(fd, 0xe + 4*dev->bar, SEEK_SET);
+		if (status < 0) {
+			printf("Error: configuration space lseek failed\n");
+			close(fd);
+			return -1;
+		}
+		status = read(fd, &header_type, 2);
+		if (status < 0) {
+			printf("Error: configuration space read failed\n");
+			close(fd);
+			return -1;
+		}
+		if (header_type) {
+			printf ("Bad header type 0x%0x\n", header_type);
+			return -1;
+		}
+
+		status = lseek(fd, 0x4 + 4*dev->bar, SEEK_SET);
+		if (status < 0) {
+			printf("Error: configuration space lseek failed\n");
+			close(fd);
+			return -1;
+		}
+		status = read(fd, &command, 2);
+		if (status < 0) {
+			printf("Error: configuration space read failed\n");
+			close(fd);
+			return -1;
+		}
+		if ((command & 2) == 0) {
+			printf ("Device not MEM+\n");
+			return -1;
+		}
+		if ((command & 4) == 0) {
+			printf ("Device not BusMaster+\n");
+			/* When will do I/O exit */
+		}
+		printf("Command is 0x%0X\n", command);
 
 		status = lseek(fd, 0x10 + 4*dev->bar, SEEK_SET);
 		if (status < 0) {
