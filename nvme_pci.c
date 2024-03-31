@@ -342,7 +342,7 @@ int main(int argc, char *argv[])
 		char configname[100];
 		int fd;
 		uint16_t command;
-		uint8_t header_type;
+		uint16_t header_type;
 
 		snprintf(configname, 99, "/sys/bus/pci/devices/%04x:%02x:%02x.%1x/config",
 				dev->domain, dev->bus, dev->slot, dev->function);
