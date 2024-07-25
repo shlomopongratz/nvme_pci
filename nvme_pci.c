@@ -30,7 +30,7 @@
 #include <unistd.h>
 #include <stdint.h>
 
-//~ /* From QEMU include/block/nvme.h*/
+// From QEMU include/block/nvme.h
 enum NvmeCapShift {
     CAP_MQES_SHIFT     = 0,
     CAP_CQR_SHIFT      = 16,
@@ -74,14 +74,51 @@ enum NvmeCapMask {
 #define NVME_CAP_PMRS(cap)  (((cap) >> CAP_PMRS_SHIFT)   & CAP_PMRS_MASK)
 #define NVME_CAP_CMBS(cap)  (((cap) >> CAP_CMBS_SHIFT)   & CAP_CMBS_MASK)
 
+// From include/spdk/nvme_spec.h
+union nvme_cc_register {
+	uint32_t	raw;
+	struct {
+		/** enable */
+		uint32_t en             : 1;
+		uint32_t reserved1      : 3;
+		/** i/o command set selected */
+		uint32_t css            : 3;
+		/** memory page size */
+		uint32_t mps            : 4;
+		/** arbitration mechanism selected */
+		uint32_t ams            : 3;
+		/** shutdown notification */
+		uint32_t shn            : 2;
+		/** i/o submission queue entry size */
+		uint32_t iosqes         : 4;
+		/** i/o completion queue entry size */
+		uint32_t iocqes         : 4;
+		uint32_t reserved2      : 8;
+	} bits;
+};
+
+union nvme_csts_register {
+	uint32_t	raw;
+	struct {
+		/** ready */
+		uint32_t rdy            : 1;
+		/** controller fatal status */
+		uint32_t cfs            : 1;
+		/** shutdown status */
+		uint32_t shst           : 2;
+		/** NVM subsystem reset occurred */
+		uint32_t nssro          : 1;
+		/** Processing paused */
+		uint32_t pp             : 1;
+		uint32_t reserved1      : 26;
+	} bits;
+};
+
 
 #define SQ0TDBL_OFFSET 0x1000
 
 /* PCI device */
 typedef struct {
-	/* Base address region */
-	unsigned int bar;
-
 	/* Slot info */
 	unsigned int domain;
 	unsigned int bus;
@@ -146,6 +183,38 @@ static void show_usage(void)
 		 "  -s <device>   Slot/device (as per lspci)\n");
 }
 
+void print_cc(uint32_t raw)
+{
+	union nvme_cc_register cc;
+
+	cc.raw = raw;
+
+	printf("\t\ten        0x%04x enable\n", cc.bits.en);
+	printf("\t\treserved1 0x%04x reserved\n", cc.bits.reserved1 );
+	printf("\t\tcss       0x%04x i/o command set selected\n", cc.bits.css);
+	printf("\t\tmps       0x%04x memory page size\n", cc.bits.mps);
+	printf("\t\tams       0x%04x arbitration mechanism selected\n", cc.bits.ams);
+	printf("\t\tshn       0x%04x shutdown notification\n", cc.bits.shn);
+	printf("\t\tiosqes    0x%04x submission queue entry size\n", cc.bits.iosqes);
+	printf("\t\tiocqes    0x%04x i/o completion queue entry size\n", cc.bits.iocqes);
+	printf("\t\treserved2 0x%04x reserved\n", cc.bits.reserved2);
+}
+
+void print_csts(uint32_t raw)
+{
+	union nvme_csts_register csts;
+
+	csts.raw = raw;
+
+	printf("\t\trdy       0x%04x ready\n", csts.bits.rdy);
+	printf("\t\tcfs       0x%04x controller fatal status\n", csts.bits.cfs);
+	printf("\t\tshst      0x%04x shutdown status\n", csts.bits.shst);
+	printf("\t\tnssro     0x%04x NVM subsystem reset occurred\n", csts.bits.nssro);
+	printf("\t\tpp        0x%04x Processing paused\n", csts.bits.pp);
+	printf("\t\treserved1 0x%04x reserved\n", csts.bits.reserved1);
+
+}
+
 void print_cap(uint64_t cap)
 {
 	printf("\tMQES   0x%04lx  Maximum Queue Entries Supported %lu\n", NVME_CAP_MQES(cap), NVME_CAP_MQES(cap));
@@ -193,7 +262,9 @@ void parse_controller(device_t *dev)
 	printf("INTMS  - Interrupt Mask Set                        0x0%X\n", regs->intms);
 	printf("INTMC  - Interrupt Mask Clear                      0x0%X\n", regs->intmc);
 	printf("CC     - Controller Configuration                  0x%0X\n", regs->cc);
+	print_cc(regs->cc);
 	printf("CSTS   - Controller Status                         0x%0X\n", regs->csts);
+	print_csts(regs->csts);
 	printf("NSSR   - NVM Subsystem Reset (Optionsl)            0x%0X\n", regs->nssr);
 	printf("AQA    - Admin Queue Attributes                    0x%0X\n", regs->aqa);
 	printf("ASQ    - Admin Queue Subission Queue Base Address  0x%0lX\n", regs->asq);
@@ -264,8 +335,6 @@ int main(int argc, char *argv[])
 	/* Clear the structure fields */
 	memset(dev, 0, sizeof(device_t));
 
-	dev->bar = 0;
-
 	while ((opt = getopt(argc, argv, "hs:")) != -1) {
 		switch (opt) {
 		case 'h':
@@ -290,18 +359,24 @@ int main(int argc, char *argv[])
 	 * ------------------------------------------------------------
 	 */
 
-	/* Extract the PCI parameters from the slot string */
-	status = sscanf(slot, "%2x:%2x.%1x",
-			&dev->bus, &dev->slot, &dev->function);
-	if (status != 3) {
-		printf("Error parsing slot information!\n");
-		show_usage();
-		return -1;
+	// Extract the PCI parameters from the slot string
+	status = sscanf(slot, "%4x:%2x:%2x.%1x",
+			&dev->domain, &dev->bus, &dev->slot, &dev->function);
+	if (status != 4) {
+		status = sscanf(slot, "%2x:%2x.%1x",
+				&dev->bus, &dev->slot, &dev->function);
+		if (status != 3) {
+			printf("Error parsing slot information!\n");
+			show_usage();
+			return -1;
+		}
+		// Redundent since memset above should have taken care for it.
+		dev->domain = 0;
 	}
 
 	/* Convert to a sysfs resource filename and open the resource */
-	snprintf(dev->filename, 99, "/sys/bus/pci/devices/%04x:%02x:%02x.%1x/resource%d",
-			dev->domain, dev->bus, dev->slot, dev->function, dev->bar);
+	snprintf(dev->filename, 99, "/sys/bus/pci/devices/%04x:%02x:%02x.%1x/resource0",
+			dev->domain, dev->bus, dev->slot, dev->function);
 	dev->fd = open(dev->filename, O_RDWR | O_SYNC);
 	if (dev->fd < 0) {
 		printf("Open failed for file '%s': errno %d, %s\n",
@@ -359,7 +434,8 @@ int main(int argc, char *argv[])
 		 *	Support big endian
 		 */
 
-		status = lseek(fd, 0xe + 4*dev->bar, SEEK_SET);
+		// 0 is bar #
+		status = lseek(fd, 0xe + 4*0, SEEK_SET);
 		if (status < 0) {
 			printf("Error: configuration space lseek failed\n");
 			close(fd);
@@ -376,7 +452,8 @@ int main(int argc, char *argv[])
 			return -1;
 		}
 
-		status = lseek(fd, 0x4 + 4*dev->bar, SEEK_SET);
+		// 0 is bar #
+		status = lseek(fd, 0x4 + 4*0, SEEK_SET);
 		if (status < 0) {
 			printf("Error: configuration space lseek failed\n");
 			close(fd);
@@ -398,7 +475,8 @@ int main(int argc, char *argv[])
 		}
 		printf("Command is 0x%0X\n", command);
 
-		status = lseek(fd, 0x10 + 4*dev->bar, SEEK_SET);
+		// 0 is bar #
+		status = lseek(fd, 0x10 + 4*0, SEEK_SET);
 		if (status < 0) {
 			printf("Error: configuration space lseek failed\n");
 			close(fd);
@@ -424,7 +502,7 @@ int main(int argc, char *argv[])
 	printf("\n");
 	printf("PCI debug\n");
 	printf("---------\n\n");
-	printf(" - accessing BAR%d\n", dev->bar);
+	printf(" - accessing BAR0\n");
 	printf(" - region size is %d-bytes\n", dev->size);
 	printf(" - offset into region is %d-bytes\n", dev->offset);
 
